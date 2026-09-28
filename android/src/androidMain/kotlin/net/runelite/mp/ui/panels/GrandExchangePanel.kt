@@ -146,7 +146,7 @@ internal object GrandExchangeBridge
         return try { mgr.search(query) } catch (t: Throwable) { emptyList() }
     }
 
-    fun livePrice(itemId: Int): Int
+    fun livePrice(itemId: Int): Long
     {
         val mgr = RuneLiteAccess.instance(ItemManager::class.java) ?: return 0
         return try { mgr.getItemPrice(itemId) } catch (t: Throwable) { 0 }
