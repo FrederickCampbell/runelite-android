@@ -49,6 +49,7 @@ public class AndroidGL
 	public static final int GL_CURRENT_PROGRAM = GLES20.GL_CURRENT_PROGRAM;
 
 	public static final int GL_ARRAY_BUFFER = GLES20.GL_ARRAY_BUFFER;
+	public static final int GL_ARRAY_BUFFER_ARB = GL_ARRAY_BUFFER;
 	public static final int GL_ELEMENT_ARRAY_BUFFER = GLES20.GL_ELEMENT_ARRAY_BUFFER;
 	public static final int GL_PIXEL_UNPACK_BUFFER = GLES30.GL_PIXEL_UNPACK_BUFFER;
 	public static final int GL_COPY_READ_BUFFER = GLES30.GL_COPY_READ_BUFFER;
@@ -61,6 +62,7 @@ public class AndroidGL
 	public static final int GL_STATIC_DRAW = GLES20.GL_STATIC_DRAW;
 	public static final int GL_DYNAMIC_DRAW = GLES20.GL_DYNAMIC_DRAW;
 	public static final int GL_STREAM_DRAW = GLES20.GL_STREAM_DRAW;
+	public static final int GL_STREAM_COPY = 0x88E2;
 
 	public static final int GL_MAP_READ_BIT = GLES30.GL_MAP_READ_BIT;
 	public static final int GL_MAP_WRITE_BIT = GLES30.GL_MAP_WRITE_BIT;
@@ -78,6 +80,7 @@ public class AndroidGL
 	public static final int GL_TEXTURE0 = GLES20.GL_TEXTURE0;
 	public static final int GL_TEXTURE_2D = GLES20.GL_TEXTURE_2D;
 	public static final int GL_TEXTURE_2D_ARRAY = GLES30.GL_TEXTURE_2D_ARRAY;
+	public static final int GL_TEXTURE_3D = GLES30.GL_TEXTURE_3D;
 	public static final int GL_TEXTURE_CUBE_MAP = GLES20.GL_TEXTURE_CUBE_MAP;
 	public static final int GL_TEXTURE_CUBE_MAP_POSITIVE_X = GLES20.GL_TEXTURE_CUBE_MAP_POSITIVE_X;
 	public static final int GL_TEXTURE_BUFFER = 0x8C2A;
@@ -188,6 +191,8 @@ public class AndroidGL
 	public static final int GL_DEBUG_SEVERITY_NOTIFICATION = 0x826B;
 	public static final int GL_DONT_CARE = 0x1100;
 	public static final int GL_BUFFER = 0x82E0;
+	public static final int GL_SHADER_STORAGE_BARRIER_BIT = 0x2000;
+	public static final int GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS = 0x90EB;
 
 	private static final Map<Integer, Integer> SHADER_TYPES = new ConcurrentHashMap<>();
 	private static final AtomicInteger QUERY_IDS = new AtomicInteger(0x6000_0000);
@@ -551,6 +556,8 @@ public class AndroidGL
 	public static void glBindImageTexture(int unit, int texture, int level, boolean layered, int layer, int access, int format)
 	{ GLES31.glBindImageTexture(unit, texture, level, layered, layer, access, format); }
 	public static void glMemoryBarrier(int barriers) { GLES31.glMemoryBarrier(barriers); }
+	public static void glDispatchCompute(int numGroupsX, int numGroupsY, int numGroupsZ)
+	{ GLES31.glDispatchCompute(numGroupsX, numGroupsY, numGroupsZ); }
 
 	public static void glGetProgramBinary(int program, int[] length, int[] binaryFormat, ByteBuffer binary)
 	{
@@ -562,4 +569,5 @@ public class AndroidGL
 	public static void glPushDebugGroup(int source, int id, CharSequence message) {}
 	public static void glPopDebugGroup() {}
 	public static void glDebugMessageControl(int source, int type, int severity, int id, boolean enabled) {}
+	public static void glDebugMessageControl(int source, int type, int severity, int[] ids, boolean enabled) {}
 }
