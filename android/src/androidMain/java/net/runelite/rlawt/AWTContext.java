@@ -40,7 +40,17 @@ public class AWTContext
 		// uses this AWTContext instead, so take presentation ownership here.
 		Canvas.setRenderedByGles(true);
 		ownsGlesPresentation = true;
-		GlesHost.get().makeCurrent();
+
+		// Compose mounts the SurfaceView asynchronously after the Canvas ownership
+		// flag changes. Desktop rlawt returns from createGLContext() with a usable
+		// current context, and 117HD relies on that contract immediately for
+		// capability probing and resource creation, so preserve it here.
+		if (!GlesHost.get().awaitCurrent(3000))
+		{
+			Canvas.setRenderedByGles(false);
+			ownsGlesPresentation = false;
+			throw new IllegalStateException("Timed out waiting for Android GLES surface");
+		}
 	}
 
 	public boolean makeCurrent()
