@@ -288,6 +288,24 @@ public final class GlesHost
 		}
 	}
 
+	/**
+	 * Detach the EGL context from the calling thread without destroying it. This
+	 * mirrors rlawt's detachCurrent() ABI and lets external renderers release the
+	 * client thread while keeping the process-wide Android context reusable.
+	 */
+	public void detachCurrent()
+	{
+		synchronized (lock)
+		{
+			if (display == EGL14.EGL_NO_DISPLAY) return;
+			EGL14.eglMakeCurrent(
+				display,
+				EGL14.EGL_NO_SURFACE,
+				EGL14.EGL_NO_SURFACE,
+				EGL14.EGL_NO_CONTEXT);
+		}
+	}
+
 	/** Present the current frame. Must be called after the caller has finished
 	 *  GLES draws on the current thread. */
 	public boolean swapBuffers()
