@@ -19,6 +19,7 @@ public final class GLCapabilities
 	public final boolean GL_ARB_shader_image_load_store = false;
 	public final boolean GL_ARB_copy_buffer = true;
 	public final boolean GL_ARB_map_buffer_range = true;
+	public final boolean GL_EXT_texture_filter_anisotropic = AndroidGL.hasExtension("GL_EXT_texture_filter_anisotropic");
 
 	public final boolean forwardCompatible = true;
 
