@@ -2,49 +2,80 @@ package net.runelite.rlawt;
 
 import android.opengl.GLES32;
 import java.awt.Canvas;
+import java.awt.Component;
 import net.runelite.client.plugins.gpugles.GlesHost;
 
 /**
- * Android-native replacement for RuneLite rlawt's desktop GL context manager.
+ * Android implementation of RuneLite rlawt's AWTContext ABI.
  *
- * 117HD is written against AWTContext/LWJGL on desktop. On Android the window,
- * surface and GL context are already owned by {@link GlesHost}; this class makes
- * that EGL/GLES context the implementation of the same lifecycle contract.
+ * Keep every public method descriptor identical to desktop rlawt: Plugin Hub jars
+ * such as 117HD were compiled against that class, so changing a return type or
+ * constructor parameter would produce NoSuchMethodError even when the Java source
+ * looked otherwise compatible.
+ *
+ * Android does not create a second GL implementation here. The context, window
+ * surface and presentation lifetime are owned by the app-wide {@link GlesHost},
+ * which is backed directly by EGL14/GLES.
  */
-public class AWTContext
+public final class AWTContext
 {
-	private final Canvas canvas;
+	private final Component component;
 	private boolean ownsGlesPresentation;
 
-	public AWTContext(Canvas canvas)
+	public AWTContext(Component component)
 	{
-		this.canvas = canvas;
+		if (component == null)
+		{
+			throw new NullPointerException("component");
+		}
+		this.component = component;
 	}
 
-	public static void loadNatives()
+	public synchronized static void loadNatives()
 	{
-		// EGL/GLES are Android framework APIs; there are no desktop natives to load.
+		// EGL/GLES are Android framework APIs; there are no rlawt desktop natives.
 	}
 
 	public void configurePixelFormat(int alpha, int depth, int stencil)
 	{
-		// GlesHost selects an EGLConfig suitable for the SurfaceView. 117HD renders
-		// its own scene/depth targets, so the desktop pixel-format hints are not
-		// required here.
+		// GlesHost chooses the EGLConfig. 117HD uses its own off-screen render
+		// targets for scene color/depth, so desktop pixel-format hints are not
+		// required for correctness.
 	}
 
+	public void configureMultisamples(int samples)
+	{
+		GlesHost.get().setRequestedMsaa(samples);
+	}
+
+	/**
+	 * Desktop rlawt returns the platform framebuffer object. Android renders to
+	 * the EGL window surface directly, whose default framebuffer is name 0.
+	 */
+	public int getFramebuffer(boolean front)
+	{
+		return 0;
+	}
+
+	/**
+	 * OpenGL desktop uses GL_FRONT for the default framebuffer. OpenGL ES uses
+	 * GL_BACK for reads from a double-buffered EGL window surface.
+	 */
+	public int getBufferMode()
+	{
+		return GLES32.GL_BACK;
+	}
+
+	/**
+	 * Preserve desktop rlawt's synchronous contract: on return a GL context is
+	 * current on the calling thread. Compose mounts the SurfaceView only after the
+	 * Canvas switches to GLES presentation, so wait for that lifecycle handoff.
+	 */
 	public void createGLContext()
 	{
-		// The Compose host only exposes the SurfaceView through the game-canvas
-		// rectangle while this flag is set. GPU(GLES) normally owns the flag; 117HD
-		// uses this AWTContext instead, so take presentation ownership here.
 		Canvas.setRenderedByGles(true);
 		ownsGlesPresentation = true;
 
-		// Compose mounts the SurfaceView asynchronously after the Canvas ownership
-		// flag changes. Desktop rlawt returns from createGLContext() with a usable
-		// current context, and 117HD relies on that contract immediately for
-		// capability probing and resource creation, so preserve it here.
 		if (!GlesHost.get().awaitCurrent(3000))
 		{
 			Canvas.setRenderedByGles(false);
@@ -53,38 +84,43 @@ public class AWTContext
 		}
 	}
 
-	public boolean makeCurrent()
+	public int setSwapInterval(int interval)
 	{
-		return GlesHost.get().makeCurrent();
+		return GlesHost.get().setSwapInterval(interval) ? interval : -1;
+	}
+
+	public void makeCurrent()
+	{
+		if (!GlesHost.get().makeCurrent())
+		{
+			throw new IllegalStateException("Android GLES context is not available");
+		}
+	}
+
+	public void detachCurrent()
+	{
+		GlesHost.get().detachCurrent();
 	}
 
 	public void swapBuffers()
 	{
-		GlesHost.get().swapBuffers();
+		if (!GlesHost.get().swapBuffers())
+		{
+			throw new IllegalStateException("Android GLES swap failed");
+		}
 	}
 
-	/** GLES default framebuffer for the EGL window surface. */
-	public int getFramebuffer(boolean resolve)
-	{
-		return 0;
-	}
-
-	public int getBufferMode()
-	{
-		return GLES32.GL_BACK;
-	}
-
-	public int setSwapInterval(int interval)
-	{
-		GlesHost.get().setSwapInterval(interval);
-		return interval;
-	}
+	// Desktop-only native handles used by 117HD's optional OpenCL interop path.
+	// Android's supported renderer is the GLES ZoneRenderer, so no native OpenCL
+	// sharing handles exist here.
+	public long getGLContext() { return 0L; }
+	public long getCGLShareGroup() { return 0L; }
+	public long getGLXDisplay() { return 0L; }
+	public long getWGLHDC() { return 0L; }
 
 	public void destroy()
 	{
-		// Do not destroy GlesHost itself: it belongs to the app process and is reused
-		// by the built-in GPU plugin. Only return the Canvas to software composition
-		// when this AWTContext was the component that took it over.
+		GlesHost.get().detachCurrent();
 		if (ownsGlesPresentation)
 		{
 			Canvas.setRenderedByGles(false);
