@@ -127,6 +127,8 @@ val stageRlhdAndroidSources = if (androidSdkAvailable) {
             "rs117/hd/opengl/compute/**",
             "rs117/hd/utils/buffer/SharedGLBuffer.java",
             "rs117/hd/opengl/uniforms/UBOCompute.java",
+            "rs117/hd/model/ModelCache.java",
+            "rs117/hd/overlays/FrameTimer.java",
         )
     }
 } else null
