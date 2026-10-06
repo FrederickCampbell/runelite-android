@@ -115,6 +115,7 @@ public final class GlesHost
 					if (surfaceView != view) return;
 					androidSurface = holder.getSurface();
 					surfaceDirty = true;
+					lock.notifyAll();
 				}
 				Log.i(TAG, "surfaceCreated");
 			}
@@ -131,6 +132,7 @@ public final class GlesHost
 						surfaceDirty = true;
 					}
 					androidSurface = holder.getSurface();
+					lock.notifyAll();
 				}
 				Log.i(TAG, "surfaceChanged " + width + "x" + height + " fmt=" + format);
 			}
@@ -214,6 +216,48 @@ public final class GlesHost
 	 * tear down and recreate the EGL surface on the next makeCurrent so the
 	 * driver picks up the new backing buffer.
 	 */
+	/**
+	 * Wait for Compose/SurfaceFlinger to publish the SurfaceView, then bind the EGL
+	 * context to the calling thread. External renderers such as 117HD initialize GL
+	 * synchronously during plugin startup, while the AndroidView hosting our
+	 * SurfaceView is mounted asynchronously after Canvas.setRenderedByGles(true).
+	 *
+	 * This method bridges those two lifecycles without creating a second GL context.
+	 * Surface callbacks wake the waiter immediately; the short timed wakeup also
+	 * covers context recreation and drivers which do not deliver a size callback.
+	 */
+	public boolean awaitCurrent(long timeoutMs)
+	{
+		final long deadline = System.nanoTime() + Math.max(0L, timeoutMs) * 1_000_000L;
+		for (;;)
+		{
+			if (makeCurrent())
+			{
+				return true;
+			}
+
+			long remainingNs = deadline - System.nanoTime();
+			if (remainingNs <= 0)
+			{
+				return false;
+			}
+
+			long waitMs = Math.max(1L, Math.min(50L, remainingNs / 1_000_000L));
+			synchronized (lock)
+			{
+				try
+				{
+					lock.wait(waitMs);
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+					return false;
+				}
+			}
+		}
+	}
+
 	public boolean makeCurrent()
 	{
 		synchronized (lock)
