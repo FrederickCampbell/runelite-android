@@ -207,9 +207,34 @@ public class AndroidGL
 		return (int) value;
 	}
 
+	public static boolean hasExtension(String extension)
+	{
+		String extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS);
+		if (extensions == null || extension == null || extension.isEmpty())
+		{
+			return false;
+		}
+		int start = 0;
+		while ((start = extensions.indexOf(extension, start)) >= 0)
+		{
+			int end = start + extension.length();
+			boolean leftOk = start == 0 || extensions.charAt(start - 1) == ' ';
+			boolean rightOk = end == extensions.length() || extensions.charAt(end) == ' ';
+			if (leftOk && rightOk) return true;
+			start = end;
+		}
+		return false;
+	}
+
+	private static boolean supportsBorderClamp()
+	{
+		return hasExtension("GL_EXT_texture_border_clamp") ||
+			hasExtension("GL_OES_texture_border_clamp");
+	}
+
 	private static int mobileWrap(int value)
 	{
-		return value == GL_CLAMP_TO_BORDER ? GL_CLAMP_TO_EDGE : value;
+		return value == GL_CLAMP_TO_BORDER && !supportsBorderClamp() ? GL_CLAMP_TO_EDGE : value;
 	}
 
 	private static boolean desktopOnlyCapability(int cap)
@@ -367,8 +392,10 @@ public class AndroidGL
 	public static void glTexParameterf(int target, int pname, float param) { GLES20.glTexParameterf(target, pname, param); }
 	public static void glTexParameterfv(int target, int pname, float[] params)
 	{
-		// GLES has no border color because CLAMP_TO_BORDER is not core.
-		if (pname != GL_TEXTURE_BORDER_COLOR) GLES20.glTexParameterfv(target, pname, params, 0);
+		if (pname != GL_TEXTURE_BORDER_COLOR || supportsBorderClamp())
+		{
+			GLES20.glTexParameterfv(target, pname, params, 0);
+		}
 	}
 
 	public static void glTexImage2D(int target, int level, int internalFormat, int width, int height, int border, int format, int type, ByteBuffer pixels)
@@ -377,20 +404,34 @@ public class AndroidGL
 	{ GLES20.glTexImage2D(target, level, internalFormat, width, height, border, format, type, pixels); }
 	public static void glTexImage2D(int target, int level, int internalFormat, int width, int height, int border, int format, int type, FloatBuffer pixels)
 	{ GLES20.glTexImage2D(target, level, internalFormat, width, height, border, format, type, pixels); }
+	public static void glTexImage2D(int target, int level, int internalFormat, int width, int height, int border, int format, int type, long offset)
+	{
+		if (offset != 0) throw new UnsupportedOperationException("Android GLES Java binding only supports PBO offset 0 for TexImage2D");
+		GLES20.glTexImage2D(target, level, internalFormat, width, height, border, format, type, (Buffer) null);
+	}
 
 	public static void glTexSubImage2D(int target, int level, int x, int y, int width, int height, int format, int type, ByteBuffer pixels)
 	{ GLES20.glTexSubImage2D(target, level, x, y, width, height, format, type, pixels); }
 	public static void glTexSubImage2D(int target, int level, int x, int y, int width, int height, int format, int type, IntBuffer pixels)
 	{ GLES20.glTexSubImage2D(target, level, x, y, width, height, format, type, pixels); }
+	public static void glTexSubImage2D(int target, int level, int x, int y, int width, int height, int format, int type, long offset)
+	{
+		if (offset != 0) throw new UnsupportedOperationException("Android GLES Java binding only supports PBO offset 0 for TexSubImage2D");
+		GLES20.glTexSubImage2D(target, level, x, y, width, height, format, type, (Buffer) null);
+	}
 
 	public static void glTexImage3D(int target, int level, int internalFormat, int width, int height, int depth, int border, int format, int type, ByteBuffer pixels)
 	{ GLES30.glTexImage3D(target, level, internalFormat, width, height, depth, border, format, type, pixels); }
 	public static void glTexImage3D(int target, int level, int internalFormat, int width, int height, int depth, int border, int format, int type, IntBuffer pixels)
 	{ GLES30.glTexImage3D(target, level, internalFormat, width, height, depth, border, format, type, pixels); }
+	public static void glTexImage3D(int target, int level, int internalFormat, int width, int height, int depth, int border, int format, int type, long offset)
+	{ GLES30.glTexImage3D(target, level, internalFormat, width, height, depth, border, format, type, checkedInt(offset)); }
 	public static void glTexSubImage3D(int target, int level, int x, int y, int z, int width, int height, int depth, int format, int type, ByteBuffer pixels)
 	{ GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, pixels); }
 	public static void glTexSubImage3D(int target, int level, int x, int y, int z, int width, int height, int depth, int format, int type, IntBuffer pixels)
 	{ GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, pixels); }
+	public static void glTexSubImage3D(int target, int level, int x, int y, int z, int width, int height, int depth, int format, int type, long offset)
+	{ GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, checkedInt(offset)); }
 	public static void glTexStorage3D(int target, int levels, int internalFormat, int width, int height, int depth)
 	{ GLES30.glTexStorage3D(target, levels, internalFormat, width, height, depth); }
 	public static void glTexBuffer(int target, int internalFormat, int buffer)
