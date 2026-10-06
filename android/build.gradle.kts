@@ -98,6 +98,39 @@ configurations.configureEach {
 
 val target = "runelite-1.13.0-injected-36433848015.271"
 
+
+/*
+ * 117HD is tracked as an upstream git submodule instead of copied into this
+ * repository. Android consumes the same Java/resources as the official Plugin
+ * Hub commit, but stages the source tree first so desktop-only renderer code can
+ * be omitted cleanly without patching upstream.
+ *
+ * The excluded classes are exclusively the legacy OpenGL/OpenCL renderer. Android
+ * ships platform-native replacements for the few common types referenced by the
+ * Zone renderer/HdPlugin, while all real 117HD scene/material/shader code remains
+ * upstream source.
+ */
+val rlhdMainDir = rootProject.file("third_party/rlhd/src/main")
+val stagedRlhdJava = layout.buildDirectory.dir("generated/rlhd/main/java")
+val stageRlhdAndroidSources = if (androidSdkAvailable) {
+    tasks.register<org.gradle.api.tasks.Sync>("stageRlhdAndroidSources") {
+        val upstreamJava = rlhdMainDir.resolve("java")
+        doFirst {
+            require(upstreamJava.isDirectory) {
+                "117HD submodule is missing. Run: git submodule update --init --recursive"
+            }
+        }
+        from(upstreamJava)
+        into(stagedRlhdJava)
+        exclude(
+            "rs117/hd/renderer/legacy/**",
+            "rs117/hd/opengl/compute/**",
+            "rs117/hd/utils/buffer/SharedGLBuffer.java",
+            "rs117/hd/opengl/uniforms/UBOCompute.java",
+        )
+    }
+} else null
+
 // --------------------------------------------------------------------------------------
 // rewriteLauncherEnv: makes the injected client read its JX_* launcher credentials from
 // system properties instead of the applet-parameter lookup it ships with.
@@ -390,11 +423,24 @@ if (androidSdkAvailable) {
         // treats the module as multiplatform, so every directory is mapped onto "main" here.
         sourceSets.named("main") {
             manifest.srcFile("src/androidMain/AndroidManifest.xml")
-            java.srcDirs("src/androidMain/kotlin", "src/androidMain/java")
+            java.srcDirs(
+                "src/androidMain/kotlin",
+                "src/androidMain/java",
+                stagedRlhdJava.get().asFile,
+            )
             kotlin.srcDirs("src/androidMain/kotlin")
             res.srcDirs("src/androidMain/res")
             assets.srcDirs("src/androidMain/assets")
-            resources.srcDirs("src/androidMain/resources")
+            resources.srcDirs(
+                "src/androidMain/resources",
+                rlhdMainDir.resolve("resources"),
+            )
+        }
+
+        // AGP's variant compile tasks depend on preBuild; make the upstream-to-Android
+        // source projection an explicit part of that graph.
+        tasks.named("preBuild").configure {
+            dependsOn(stageRlhdAndroidSources)
         }
 
         // Release signing.
