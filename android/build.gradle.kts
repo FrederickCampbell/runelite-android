@@ -130,6 +130,43 @@ val stageRlhdAndroidSources = if (androidSdkAvailable) {
             "rs117/hd/model/ModelCache.java",
             "rs117/hd/overlays/FrameTimer.java",
         )
+
+        // HDUtils uses Oracle's com.sun.management extension on desktop to query
+        // physical RAM. That package is not part of Android's public Java API.
+        // Project the one platform-specific method onto AndroidSystemInfo while
+        // keeping the rest of upstream HDUtils byte-for-byte unchanged.
+        doLast {
+            val hdUtils = stagedRlhdJava.get().file("rs117/hd/utils/HDUtils.java").asFile
+            var source = hdUtils.readText()
+
+            val managementImport = "import java.lang.management.ManagementFactory;\n"
+            require(source.contains(managementImport)) {
+                "117HD HDUtils no longer imports ManagementFactory; re-check Android projection"
+            }
+            source = source.replace(managementImport, "")
+
+            val desktopMemoryMethod = """
+\tpublic static long getTotalSystemMemory() {
+\t\ttry {
+\t\t\tvar bean = ManagementFactory.getOperatingSystemMXBean();
+\t\t\treturn ((com.sun.management.OperatingSystemMXBean) bean).getTotalPhysicalMemorySize();
+\t\t} catch (Throwable ignored) {
+\t\t\treturn Long.MAX_VALUE;
+\t\t}
+\t}
+""".trimIndent()
+
+            val androidMemoryMethod = """
+\tpublic static long getTotalSystemMemory() {
+\t\treturn rs117.hd.platform.AndroidSystemInfo.totalPhysicalMemory();
+\t}
+""".trimIndent()
+
+            require(source.contains(desktopMemoryMethod)) {
+                "117HD HDUtils#getTotalSystemMemory changed upstream; re-check Android projection"
+            }
+            hdUtils.writeText(source.replace(desktopMemoryMethod, androidMemoryMethod))
+        }
     }
 } else null
 
