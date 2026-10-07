@@ -145,22 +145,20 @@ val stageRlhdAndroidSources = if (androidSdkAvailable) {
             }
             source = source.replace(managementImport, "")
 
-            val desktopMemoryMethod = """
-\tpublic static long getTotalSystemMemory() {
-\t\ttry {
-\t\t\tvar bean = ManagementFactory.getOperatingSystemMXBean();
-\t\t\treturn ((com.sun.management.OperatingSystemMXBean) bean).getTotalPhysicalMemorySize();
-\t\t} catch (Throwable ignored) {
-\t\t\treturn Long.MAX_VALUE;
-\t\t}
-\t}
-""".trimIndent()
+            val desktopMemoryMethod =
+                "\tpublic static long getTotalSystemMemory() {\n" +
+                "\t\ttry {\n" +
+                "\t\t\tvar bean = ManagementFactory.getOperatingSystemMXBean();\n" +
+                "\t\t\treturn ((com.sun.management.OperatingSystemMXBean) bean).getTotalPhysicalMemorySize();\n" +
+                "\t\t} catch (Throwable ignored) {\n" +
+                "\t\t\treturn Long.MAX_VALUE;\n" +
+                "\t\t}\n" +
+                "\t}"
 
-            val androidMemoryMethod = """
-\tpublic static long getTotalSystemMemory() {
-\t\treturn rs117.hd.platform.AndroidSystemInfo.totalPhysicalMemory();
-\t}
-""".trimIndent()
+            val androidMemoryMethod =
+                "\tpublic static long getTotalSystemMemory() {\n" +
+                "\t\treturn rs117.hd.platform.AndroidSystemInfo.totalPhysicalMemory();\n" +
+                "\t}"
 
             require(source.contains(desktopMemoryMethod)) {
                 "117HD HDUtils#getTotalSystemMemory changed upstream; re-check Android projection"
