@@ -52,6 +52,7 @@ public class AndroidGL
 	public static final int GL_ARRAY_BUFFER_ARB = GL_ARRAY_BUFFER;
 	public static final int GL_ELEMENT_ARRAY_BUFFER = GLES20.GL_ELEMENT_ARRAY_BUFFER;
 	public static final int GL_PIXEL_UNPACK_BUFFER = GLES30.GL_PIXEL_UNPACK_BUFFER;
+	public static final int GL_PIXEL_UNPACK_BUFFER_BINDING = 0x88EF;
 	public static final int GL_COPY_READ_BUFFER = GLES30.GL_COPY_READ_BUFFER;
 	public static final int GL_COPY_WRITE_BUFFER = GLES30.GL_COPY_WRITE_BUFFER;
 	public static final int GL_DRAW_INDIRECT_BUFFER = 0x8F3F;
@@ -230,6 +231,35 @@ public class AndroidGL
 	{
 		return hasExtension("GL_EXT_texture_border_clamp") ||
 			hasExtension("GL_OES_texture_border_clamp");
+	}
+
+	private static boolean supportsBgraUpload()
+	{
+		return hasExtension("GL_EXT_texture_format_BGRA8888") ||
+			hasExtension("GL_APPLE_texture_format_BGRA8888") ||
+			hasExtension("GL_EXT_bgra");
+	}
+
+	/**
+	 * 117HD stores BufferedImage/RuneLite pixels as Java ARGB ints. Desktop GL
+	 * uploads those with BGRA + UNSIGNED_INT_8_8_8_8_REV. That packed desktop
+	 * type is not a valid GLES texture upload combination, so convert the ints
+	 * into explicit RGBA bytes when the upload is not going through a PBO.
+	 */
+	private static ByteBuffer argbIntsToRgbaBytes(IntBuffer pixels)
+	{
+		IntBuffer src = pixels.duplicate();
+		ByteBuffer out = ByteBuffer.allocateDirect(Math.multiplyExact(src.remaining(), 4));
+		while (src.hasRemaining())
+		{
+			int argb = src.get();
+			out.put((byte) ((argb >>> 16) & 0xFF));
+			out.put((byte) ((argb >>> 8) & 0xFF));
+			out.put((byte) (argb & 0xFF));
+			out.put((byte) ((argb >>> 24) & 0xFF));
+		}
+		out.flip();
+		return out;
 	}
 
 	private static int mobileWrap(int value)
@@ -418,7 +448,13 @@ public class AndroidGL
 	public static void glTexImage2D(int target, int level, int internalFormat, int width, int height, int border, int format, int type, long offset)
 	{
 		if (offset != 0) throw new UnsupportedOperationException("Android GLES Java binding only supports PBO offset 0 for TexImage2D");
-		GLES20.glTexImage2D(target, level, internalFormat, width, height, border, format, type, (Buffer) null);
+
+		// With no client data the external format only describes a pointer that is
+		// null. Desktop 117HD uses BGRA here while allocating its UI texture, but
+		// BGRA is not core GLES. Use the equivalent core RGBA declaration so this
+		// allocation does not depend on a vendor extension.
+		int glesFormat = format == GL_BGRA ? GL_RGBA : format;
+		GLES20.glTexImage2D(target, level, internalFormat, width, height, border, glesFormat, type, (Buffer) null);
 	}
 
 	public static void glTexSubImage2D(int target, int level, int x, int y, int width, int height, int format, int type, ByteBuffer pixels)
@@ -428,6 +464,54 @@ public class AndroidGL
 	public static void glTexSubImage2D(int target, int level, int x, int y, int width, int height, int format, int type, long offset)
 	{
 		if (offset != 0) throw new UnsupportedOperationException("Android GLES Java binding only supports PBO offset 0 for TexSubImage2D");
+
+		if (format == GL_BGRA && type == GL_UNSIGNED_INT_8_8_8_8_REV)
+		{
+			// RuneLite's UI PBO contains Java ARGB ints. On little-endian Android
+			// those bytes are B,G,R,A, so EXT BGRA + UNSIGNED_BYTE is a zero-copy
+			// equivalent of desktop BGRA + UNSIGNED_INT_8_8_8_8_REV.
+			if (supportsBgraUpload())
+			{
+				GLES20.glTexSubImage2D(target, level, x, y, width, height, GL_BGRA, GL_UNSIGNED_BYTE, (Buffer) null);
+				return;
+			}
+
+			// Portable fallback for GLES implementations without BGRA upload support.
+			// This is intentionally slower, but it preserves correctness instead of
+			// silently swapping red/blue channels.
+			int byteCount = Math.multiplyExact(Math.multiplyExact(width, height), 4);
+			int[] binding = new int[1];
+			GLES20.glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, binding, 0);
+			Buffer mapped = GLES30.glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, byteCount, GL_MAP_READ_BIT);
+			if (!(mapped instanceof ByteBuffer))
+			{
+				throw new IllegalStateException("Unable to map UI pixel-unpack buffer for BGRA conversion");
+			}
+
+			ByteBuffer src = ((ByteBuffer) mapped).duplicate();
+			ByteBuffer rgba = ByteBuffer.allocateDirect(byteCount);
+			for (int i = 0; i < byteCount; i += 4)
+			{
+				byte b = src.get(i);
+				byte g = src.get(i + 1);
+				byte r = src.get(i + 2);
+				byte a = src.get(i + 3);
+				rgba.put(r).put(g).put(b).put(a);
+			}
+			rgba.flip();
+			GLES30.glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+			GLES20.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+			try
+			{
+				GLES20.glTexSubImage2D(target, level, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+			}
+			finally
+			{
+				GLES20.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, binding[0]);
+			}
+			return;
+		}
+
 		GLES20.glTexSubImage2D(target, level, x, y, width, height, format, type, (Buffer) null);
 	}
 
@@ -440,7 +524,15 @@ public class AndroidGL
 	public static void glTexSubImage3D(int target, int level, int x, int y, int z, int width, int height, int depth, int format, int type, ByteBuffer pixels)
 	{ GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, pixels); }
 	public static void glTexSubImage3D(int target, int level, int x, int y, int z, int width, int height, int depth, int format, int type, IntBuffer pixels)
-	{ GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, pixels); }
+	{
+		if (format == GL_BGRA && type == GL_UNSIGNED_INT_8_8_8_8_REV)
+		{
+			ByteBuffer rgba = argbIntsToRgbaBytes(pixels);
+			GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+			return;
+		}
+		GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, pixels);
+	}
 	public static void glTexSubImage3D(int target, int level, int x, int y, int z, int width, int height, int depth, int format, int type, long offset)
 	{ GLES30.glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, checkedInt(offset)); }
 	public static void glTexStorage3D(int target, int levels, int internalFormat, int width, int height, int depth)
