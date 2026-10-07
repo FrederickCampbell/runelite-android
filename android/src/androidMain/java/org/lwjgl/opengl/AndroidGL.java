@@ -246,6 +246,17 @@ public class AndroidGL
 	}
 
 	public static String glGetString(int name) { return GLES20.glGetString(name); }
+
+	public static boolean isGlesAtLeast(int requiredMajor, int requiredMinor)
+	{
+		int[] major = new int[1];
+		int[] minor = new int[1];
+		GLES30.glGetIntegerv(GLES30.GL_MAJOR_VERSION, major, 0);
+		GLES30.glGetIntegerv(GLES30.GL_MINOR_VERSION, minor, 0);
+		return major[0] > requiredMajor ||
+			(major[0] == requiredMajor && minor[0] >= requiredMinor);
+	}
+
 	public static int glGetError() { return GLES20.glGetError(); }
 
 	public static int glGetInteger(int pname)
