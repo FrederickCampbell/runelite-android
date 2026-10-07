@@ -33,6 +33,8 @@ public final class GlesHost
 	 *  by eglMakeCurrent/eglSwapBuffers when the context is lost (GPU reset, driver
 	 *  eviction). */
 	private static final int EGL_CONTEXT_LOST = 0x300E;
+	private static final int EGL_CONTEXT_MAJOR_VERSION_KHR = 0x3098;
+	private static final int EGL_CONTEXT_MINOR_VERSION_KHR = 0x30FB;
 
 	/** MSAA samples requested for the on-screen surface. Falls back to no MSAA if
 	 *  the GPU/driver doesn't expose a matching config. Mobile-friendly default is
@@ -115,6 +117,7 @@ public final class GlesHost
 					if (surfaceView != view) return;
 					androidSurface = holder.getSurface();
 					surfaceDirty = true;
+					lock.notifyAll();
 				}
 				Log.i(TAG, "surfaceCreated");
 			}
@@ -131,6 +134,7 @@ public final class GlesHost
 						surfaceDirty = true;
 					}
 					androidSurface = holder.getSurface();
+					lock.notifyAll();
 				}
 				Log.i(TAG, "surfaceChanged " + width + "x" + height + " fmt=" + format);
 			}
@@ -214,6 +218,48 @@ public final class GlesHost
 	 * tear down and recreate the EGL surface on the next makeCurrent so the
 	 * driver picks up the new backing buffer.
 	 */
+	/**
+	 * Wait for Compose/SurfaceFlinger to publish the SurfaceView, then bind the EGL
+	 * context to the calling thread. External renderers such as 117HD initialize GL
+	 * synchronously during plugin startup, while the AndroidView hosting our
+	 * SurfaceView is mounted asynchronously after Canvas.setRenderedByGles(true).
+	 *
+	 * This method bridges those two lifecycles without creating a second GL context.
+	 * Surface callbacks wake the waiter immediately; the short timed wakeup also
+	 * covers context recreation and drivers which do not deliver a size callback.
+	 */
+	public boolean awaitCurrent(long timeoutMs)
+	{
+		final long deadline = System.nanoTime() + Math.max(0L, timeoutMs) * 1_000_000L;
+		for (;;)
+		{
+			if (makeCurrent())
+			{
+				return true;
+			}
+
+			long remainingNs = deadline - System.nanoTime();
+			if (remainingNs <= 0)
+			{
+				return false;
+			}
+
+			long waitMs = Math.max(1L, Math.min(50L, remainingNs / 1_000_000L));
+			synchronized (lock)
+			{
+				try
+				{
+					lock.wait(waitMs);
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+					return false;
+				}
+			}
+		}
+	}
+
 	public boolean makeCurrent()
 	{
 		synchronized (lock)
@@ -241,6 +287,24 @@ public final class GlesHost
 				return false;
 			}
 			return true;
+		}
+	}
+
+	/**
+	 * Detach the EGL context from the calling thread without destroying it. This
+	 * mirrors rlawt's detachCurrent() ABI and lets external renderers release the
+	 * client thread while keeping the process-wide Android context reusable.
+	 */
+	public void detachCurrent()
+	{
+		synchronized (lock)
+		{
+			if (display == EGL14.EGL_NO_DISPLAY) return;
+			EGL14.eglMakeCurrent(
+				display,
+				EGL14.EGL_NO_SURFACE,
+				EGL14.EGL_NO_SURFACE,
+				EGL14.EGL_NO_CONTEXT);
 		}
 	}
 
@@ -272,18 +336,45 @@ public final class GlesHost
 	 *  many Android implementations will silently treat anything &gt; 1 as 1. The
 	 *  GpuGlesPlugin calls this when {@code unlockFps} flips on/off so the engine's
 	 *  uncapped scene rate isn't hard-pinned to the display's vsync. */
-	public boolean setSwapInterval(int interval)
+	/**
+	 * Set the EGL swap interval and return the interval the Android driver actually
+	 * accepted. EGL has no desktop-style negative adaptive-vsync interval, so a
+	 * request such as -1 is projected onto ordinary vsync (1). The selected EGL
+	 * config's advertised min/max are honored instead of assuming 0/1 support.
+	 *
+	 * @return accepted interval, or -1 if no current EGL configuration is available
+	 */
+	public int setSwapIntervalActual(int requestedInterval)
 	{
 		synchronized (lock)
 		{
-			if (display == EGL14.EGL_NO_DISPLAY) return false;
-			if (!EGL14.eglSwapInterval(display, interval))
+			if (display == EGL14.EGL_NO_DISPLAY || config == null) return -1;
+
+			int[] value = new int[1];
+			int minInterval = 0;
+			int maxInterval = 1;
+			if (EGL14.eglGetConfigAttrib(display, config, EGL14.EGL_MIN_SWAP_INTERVAL, value, 0))
+				minInterval = value[0];
+			if (EGL14.eglGetConfigAttrib(display, config, EGL14.EGL_MAX_SWAP_INTERVAL, value, 0))
+				maxInterval = value[0];
+
+			// EGL_KHR_swap_buffers_with_damage does not add adaptive-vsync semantics;
+			// negative WGL/GLX swap intervals therefore map to standard vsync.
+			int normalized = requestedInterval < 0 ? 1 : requestedInterval;
+			int actual = Math.max(minInterval, Math.min(maxInterval, normalized));
+
+			if (!EGL14.eglSwapInterval(display, actual))
 			{
-				Log.w(TAG, "eglSwapInterval(" + interval + ") failed: 0x" + Integer.toHexString(EGL14.eglGetError()));
-				return false;
+				Log.w(TAG, "eglSwapInterval(" + actual + ") failed: 0x" + Integer.toHexString(EGL14.eglGetError()));
+				return -1;
 			}
-			return true;
+			return actual;
 		}
+	}
+
+	public boolean setSwapInterval(int interval)
+	{
+		return setSwapIntervalActual(interval) >= 0;
 	}
 
 
@@ -328,8 +419,33 @@ public final class GlesHost
 		}
 		config = chosen;
 
-		int[] ctxAttrs = { EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE };
-		context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, ctxAttrs, 0);
+		// 117HD's ZoneRenderer requires GLES 3.2 for geometry shaders and
+		// texture-buffer objects. Prefer an explicit 3.2 context when the EGL driver
+		// exposes KHR_create_context, then fall back to the generic ES3 context used
+		// by the built-in mobile GPU renderer. Capability probing later prevents
+		// 117HD from starting if that fallback is below 3.2.
+		String eglExtensions = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS);
+		boolean canRequestMinor = eglExtensions != null && eglExtensions.contains("EGL_KHR_create_context");
+		if (canRequestMinor)
+		{
+			int[] es32Attrs = {
+				EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
+				EGL_CONTEXT_MINOR_VERSION_KHR, 2,
+				EGL14.EGL_NONE
+			};
+			context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, es32Attrs, 0);
+			if (context == EGL14.EGL_NO_CONTEXT)
+			{
+				int err = EGL14.eglGetError();
+				Log.w(TAG, "explicit GLES 3.2 context unavailable (0x" + Integer.toHexString(err) + "), falling back to ES3");
+			}
+		}
+
+		if (context == EGL14.EGL_NO_CONTEXT)
+		{
+			int[] ctxAttrs = { EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE };
+			context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, ctxAttrs, 0);
+		}
 		if (context == EGL14.EGL_NO_CONTEXT)
 		{
 			Log.e(TAG, "eglCreateContext failed: 0x" + Integer.toHexString(EGL14.eglGetError()));

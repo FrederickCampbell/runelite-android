@@ -98,6 +98,76 @@ configurations.configureEach {
 
 val target = "runelite-1.13.0-injected-36433848015.271"
 
+
+/*
+ * 117HD is tracked as an upstream git submodule instead of copied into this
+ * repository. Android consumes the same Java/resources as the official Plugin
+ * Hub commit, but stages the source tree first so desktop-only renderer code can
+ * be omitted cleanly without patching upstream.
+ *
+ * The excluded classes are exclusively the legacy OpenGL/OpenCL renderer. Android
+ * ships platform-native replacements for the few common types referenced by the
+ * Zone renderer/HdPlugin, while all real 117HD scene/material/shader code remains
+ * upstream source.
+ */
+val rlhdMainDir = rootProject.file("third_party/rlhd/src/main")
+val stagedRlhdJava = layout.buildDirectory.dir("generated/rlhd/main/java")
+val stageRlhdAndroidSources = if (androidSdkAvailable) {
+    tasks.register<org.gradle.api.tasks.Sync>("stageRlhdAndroidSources") {
+        val upstreamJava = rlhdMainDir.resolve("java")
+        doFirst {
+            require(upstreamJava.isDirectory) {
+                "117HD submodule is missing. Run: git submodule update --init --recursive"
+            }
+        }
+        from(upstreamJava)
+        into(stagedRlhdJava)
+        exclude(
+            "rs117/hd/renderer/legacy/**",
+            "rs117/hd/opengl/compute/**",
+            "rs117/hd/utils/buffer/SharedGLBuffer.java",
+            "rs117/hd/opengl/uniforms/UBOCompute.java",
+            "rs117/hd/model/ModelCache.java",
+            "rs117/hd/overlays/FrameTimer.java",
+        )
+
+        // HDUtils uses Oracle's com.sun.management extension on desktop to query
+        // physical RAM. That package is not part of Android's public Java API.
+        // Project the one platform-specific method onto AndroidSystemInfo while
+        // keeping the rest of upstream HDUtils byte-for-byte unchanged.
+        doLast {
+            val hdUtils = stagedRlhdJava.get().file("rs117/hd/utils/HDUtils.java").asFile
+            var source = hdUtils.readText()
+
+            val managementImport = "import java.lang.management.ManagementFactory;\n"
+            require(source.contains(managementImport)) {
+                "117HD HDUtils no longer imports ManagementFactory; re-check Android projection"
+            }
+            source = source.replace(managementImport, "")
+
+            val desktopMemoryMethod =
+                "\tpublic static long getTotalSystemMemory() {\n" +
+                "\t\ttry {\n" +
+                "\t\t\tvar bean = ManagementFactory.getOperatingSystemMXBean();\n" +
+                "\t\t\treturn ((com.sun.management.OperatingSystemMXBean) bean).getTotalPhysicalMemorySize();\n" +
+                "\t\t} catch (Throwable ignored) {\n" +
+                "\t\t\treturn Long.MAX_VALUE;\n" +
+                "\t\t}\n" +
+                "\t}"
+
+            val androidMemoryMethod =
+                "\tpublic static long getTotalSystemMemory() {\n" +
+                "\t\treturn rs117.hd.platform.AndroidSystemInfo.totalPhysicalMemory();\n" +
+                "\t}"
+
+            require(source.contains(desktopMemoryMethod)) {
+                "117HD HDUtils#getTotalSystemMemory changed upstream; re-check Android projection"
+            }
+            hdUtils.writeText(source.replace(desktopMemoryMethod, androidMemoryMethod))
+        }
+    }
+} else null
+
 // --------------------------------------------------------------------------------------
 // rewriteLauncherEnv: makes the injected client read its JX_* launcher credentials from
 // system properties instead of the applet-parameter lookup it ships with.
@@ -390,11 +460,24 @@ if (androidSdkAvailable) {
         // treats the module as multiplatform, so every directory is mapped onto "main" here.
         sourceSets.named("main") {
             manifest.srcFile("src/androidMain/AndroidManifest.xml")
-            java.srcDirs("src/androidMain/kotlin", "src/androidMain/java")
+            java.srcDirs(
+                "src/androidMain/kotlin",
+                "src/androidMain/java",
+                stagedRlhdJava.get().asFile,
+            )
             kotlin.srcDirs("src/androidMain/kotlin")
             res.srcDirs("src/androidMain/res")
             assets.srcDirs("src/androidMain/assets")
-            resources.srcDirs("src/androidMain/resources")
+            resources.srcDirs(
+                "src/androidMain/resources",
+                rlhdMainDir.resolve("resources"),
+            )
+        }
+
+        // AGP's variant compile tasks depend on preBuild; make the upstream-to-Android
+        // source projection an explicit part of that graph.
+        tasks.named("preBuild").configure {
+            dependsOn(stageRlhdAndroidSources)
         }
 
         // Release signing.

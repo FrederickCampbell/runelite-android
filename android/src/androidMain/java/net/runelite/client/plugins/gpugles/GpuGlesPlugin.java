@@ -126,6 +126,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 	name = "GPU (GLES)",
 	description = "Android GLES renderer — Android port of the desktop GPU plugin",
 	tags = {"fog", "draw distance", "android"},
+	conflicts = "117 HD",
 	loadInSafeMode = false
 )
 public class GpuGlesPlugin extends Plugin implements DrawCallbacks

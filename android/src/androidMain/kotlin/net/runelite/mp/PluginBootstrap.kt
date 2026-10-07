@@ -107,6 +107,7 @@ object PluginBootstrap {
     private val DEFAULT_PINNED_PLUGINS = listOf(
         "net.runelite.client.plugins.gpugles.GpuGlesPlugin",
         "net.runelite.client.plugins.stretchedmode.StretchedModePlugin",
+        "rs117.hd.HdPlugin",
     )
 
     /**
