@@ -29,10 +29,20 @@ final class AndroidGLSL
 		String precision =
 			"\nprecision highp float;\n" +
 			"precision highp int;\n" +
+			// Desktop GLSL does not require default sampler/image precision, while
+			// GLSL ES does for types without a built-in default. Keep the complete
+			// set used by the pinned upstream 117HD shaders here so includes can
+			// remain byte-for-byte upstream.
 			"precision highp sampler2D;\n" +
 			"precision highp sampler2DArray;\n" +
+			"precision highp sampler2DShadow;\n" +
+			"precision highp samplerCube;\n" +
+			"precision highp sampler3D;\n" +
+			"precision highp isampler3D;\n" +
+			"precision highp usampler2DArray;\n" +
 			"precision highp isamplerBuffer;\n" +
-			"precision highp samplerBuffer;\n";
+			"precision highp samplerBuffer;\n" +
+			"precision highp uimage2DArray;\n";
 		translated = translated.substring(0, newline + 1) + precision + translated.substring(newline + 1);
 
 		return translated
