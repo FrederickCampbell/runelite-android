@@ -86,7 +86,7 @@ public final class AWTContext
 
 	public int setSwapInterval(int interval)
 	{
-		return GlesHost.get().setSwapInterval(interval) ? interval : -1;
+		return GlesHost.get().setSwapIntervalActual(interval);
 	}
 
 	public void makeCurrent()
