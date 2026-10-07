@@ -334,18 +334,45 @@ public final class GlesHost
 	 *  many Android implementations will silently treat anything &gt; 1 as 1. The
 	 *  GpuGlesPlugin calls this when {@code unlockFps} flips on/off so the engine's
 	 *  uncapped scene rate isn't hard-pinned to the display's vsync. */
-	public boolean setSwapInterval(int interval)
+	/**
+	 * Set the EGL swap interval and return the interval the Android driver actually
+	 * accepted. EGL has no desktop-style negative adaptive-vsync interval, so a
+	 * request such as -1 is projected onto ordinary vsync (1). The selected EGL
+	 * config's advertised min/max are honored instead of assuming 0/1 support.
+	 *
+	 * @return accepted interval, or -1 if no current EGL configuration is available
+	 */
+	public int setSwapIntervalActual(int requestedInterval)
 	{
 		synchronized (lock)
 		{
-			if (display == EGL14.EGL_NO_DISPLAY) return false;
-			if (!EGL14.eglSwapInterval(display, interval))
+			if (display == EGL14.EGL_NO_DISPLAY || config == null) return -1;
+
+			int[] value = new int[1];
+			int minInterval = 0;
+			int maxInterval = 1;
+			if (EGL14.eglGetConfigAttrib(display, config, EGL14.EGL_MIN_SWAP_INTERVAL, value, 0))
+				minInterval = value[0];
+			if (EGL14.eglGetConfigAttrib(display, config, EGL14.EGL_MAX_SWAP_INTERVAL, value, 0))
+				maxInterval = value[0];
+
+			// EGL_KHR_swap_buffers_with_damage does not add adaptive-vsync semantics;
+			// negative WGL/GLX swap intervals therefore map to standard vsync.
+			int normalized = requestedInterval < 0 ? 1 : requestedInterval;
+			int actual = Math.max(minInterval, Math.min(maxInterval, normalized));
+
+			if (!EGL14.eglSwapInterval(display, actual))
 			{
-				Log.w(TAG, "eglSwapInterval(" + interval + ") failed: 0x" + Integer.toHexString(EGL14.eglGetError()));
-				return false;
+				Log.w(TAG, "eglSwapInterval(" + actual + ") failed: 0x" + Integer.toHexString(EGL14.eglGetError()));
+				return -1;
 			}
-			return true;
+			return actual;
 		}
+	}
+
+	public boolean setSwapInterval(int interval)
+	{
+		return setSwapIntervalActual(interval) >= 0;
 	}
 
 
