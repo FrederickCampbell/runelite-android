@@ -33,6 +33,8 @@ public final class GlesHost
 	 *  by eglMakeCurrent/eglSwapBuffers when the context is lost (GPU reset, driver
 	 *  eviction). */
 	private static final int EGL_CONTEXT_LOST = 0x300E;
+	private static final int EGL_CONTEXT_MAJOR_VERSION_KHR = 0x3098;
+	private static final int EGL_CONTEXT_MINOR_VERSION_KHR = 0x30FB;
 
 	/** MSAA samples requested for the on-screen surface. Falls back to no MSAA if
 	 *  the GPU/driver doesn't expose a matching config. Mobile-friendly default is
@@ -417,8 +419,33 @@ public final class GlesHost
 		}
 		config = chosen;
 
-		int[] ctxAttrs = { EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE };
-		context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, ctxAttrs, 0);
+		// 117HD's ZoneRenderer requires GLES 3.2 for geometry shaders and
+		// texture-buffer objects. Prefer an explicit 3.2 context when the EGL driver
+		// exposes KHR_create_context, then fall back to the generic ES3 context used
+		// by the built-in mobile GPU renderer. Capability probing later prevents
+		// 117HD from starting if that fallback is below 3.2.
+		String eglExtensions = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS);
+		boolean canRequestMinor = eglExtensions != null && eglExtensions.contains("EGL_KHR_create_context");
+		if (canRequestMinor)
+		{
+			int[] es32Attrs = {
+				EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
+				EGL_CONTEXT_MINOR_VERSION_KHR, 2,
+				EGL14.EGL_NONE
+			};
+			context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, es32Attrs, 0);
+			if (context == EGL14.EGL_NO_CONTEXT)
+			{
+				int err = EGL14.eglGetError();
+				Log.w(TAG, "explicit GLES 3.2 context unavailable (0x" + Integer.toHexString(err) + "), falling back to ES3");
+			}
+		}
+
+		if (context == EGL14.EGL_NO_CONTEXT)
+		{
+			int[] ctxAttrs = { EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE };
+			context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, ctxAttrs, 0);
+		}
 		if (context == EGL14.EGL_NO_CONTEXT)
 		{
 			Log.e(TAG, "eglCreateContext failed: 0x" + Integer.toHexString(EGL14.eglGetError()));
